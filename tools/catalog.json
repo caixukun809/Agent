@@ -1,0 +1,103 @@
+[
+  {
+    "id": "get_current_time",
+    "search_text": "当前时间 日期 几点 本地时区 current time date now clock",
+    "schema": {
+      "type": "function",
+      "function": {
+        "name": "get_current_time",
+        "description": "获取运行本程序的电脑当前的本地日期和时间。",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "strict": true
+      }
+    }
+  },
+  {
+    "id": "run_python",
+    "search_text": "执行 Python 代码 运行脚本 计算结果 execute run python code script",
+    "schema": {
+      "type": "function",
+      "function": {
+        "name": "run_python",
+        "description": "在本地子进程中执行一段 Python 代码，返回 stdout/stderr。仅适用于本地可信环境，不具备沙箱隔离。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "code": {"type": "string", "description": "要执行的 Python 源代码。"}
+          },
+          "required": ["code"],
+          "additionalProperties": false
+        },
+        "strict": true
+      }
+    }
+  },
+  {
+    "id": "create_file",
+    "search_text": "创建新文件 保存文本 不覆盖已有文件 create new file save text",
+    "schema": {
+      "type": "function",
+      "function": {
+        "name": "create_file",
+        "description": "在工作空间中创建一个不存在的 UTF-8 文本文件。只能使用相对路径。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "相对于工作空间的文件路径"},
+            "content": {"type": "string", "description": "写入文件的完整文本"}
+          },
+          "required": ["path", "content"],
+          "additionalProperties": false
+        },
+        "strict": true
+      }
+    }
+  },
+  {
+    "id": "write_file",
+    "search_text": "修改已有文件 覆盖文件内容 写入文本 edit overwrite update existing file",
+    "schema": {
+      "type": "function",
+      "function": {
+        "name": "write_file",
+        "description": "在工作空间中创建或覆盖一个 UTF-8 文本文件。只能使用相对路径。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "相对于工作空间的文件路径"},
+            "content": {"type": "string", "description": "写入文件的完整文本"}
+          },
+          "required": ["path", "content"],
+          "additionalProperties": false
+        },
+        "strict": true
+      }
+    }
+  },
+  {
+    "id": "read_skill",
+    "search_text": "读取 skill 技能 操作说明 read skill instructions",
+    "always_available": true,
+    "schema": {
+      "type": "function",
+      "function": {
+        "name": "read_skill",
+        "description": "按名称读取一个可用 skill 的完整操作说明。执行相关任务前先读取对应 skill。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string", "description": "skill 的名称"}
+          },
+          "required": ["name"],
+          "additionalProperties": false
+        },
+        "strict": true
+      }
+    }
+  }
+]

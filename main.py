@@ -1,14 +1,22 @@
 """一个最小的命令行 AI Agent：模型选择工具，Python 执行工具。"""
 
-import json
 import os
 from pathlib import Path
-import subprocess
-import sys
 import time
-from datetime import datetime
 
+from dotenv import load_dotenv
 from openai import OpenAI, APIConnectionError, RateLimitError
+
+from memory import MemoryStore
+from skills import SkillCatalog
+from tool_index import ToolIndex
+from tools.registry import ToolRegistry
+from tools.runtime import ToolRuntime
+from vector_store import HashEmbedding, LocalEmbedding, OpenAIEmbedding, VectorStore
+
+
+# [新增-配置] 启动时自动加载项目根目录 .env，终端不再需要重复设置变量。
+load_dotenv(Path(__file__).resolve().with_name(".env"))
 
 
 # [优化1] 默认模型改为真实存在的模型，否则不设环境变量一对话就 404
@@ -16,95 +24,36 @@ MODEL = os.getenv("OPENAI_MODEL", "gpt-6-luna")
 
 MAX_STEPS = 5            # 单轮对话内最多工具调用轮次
 MAX_OUTPUT = 4000        # 工具输出截断长度
-MAX_HISTORY_ROUNDS = 20  # [优化3] 最多保留的对话轮数
 TEMPERATURE = 0.3        # [优化4] 显式温度
 MAX_RETRIES = 2          # [优化5] 网络/限流重试次数
 WORKSPACE_ROOT = Path(os.getenv("AGENT_WORKSPACE", "./workspace")).resolve()
 MAX_FILE_SIZE = 100_000  # [新增] 单个文本文件最大写入字节数
 # [新增] 流式开关：中转站不支持时可在终端设置 AGENT_STREAM=false
 STREAM_OUTPUT = os.getenv("AGENT_STREAM", "true").lower() not in {"0", "false", "no"}
+# [新增-记忆] 短期上下文只读取当前 session；达到阈值才压缩旧原文。
+SHORT_TERM_ROUNDS = int(os.getenv("SHORT_TERM_ROUNDS", "8"))
+SUMMARY_TRIGGER_ROUNDS = int(os.getenv("SUMMARY_TRIGGER_ROUNDS", "12"))
+SUMMARY_KEEP_ROUNDS = max(
+    1,
+    min(int(os.getenv("SUMMARY_KEEP_ROUNDS", "6")), SUMMARY_TRIGGER_ROUNDS - 1),
+)
+MEMORY_DB = Path(os.getenv("AGENT_MEMORY_DB", str(WORKSPACE_ROOT / "agent_memory.sqlite3")))
+OWNER_ID = os.getenv("AGENT_OWNER_ID", "local-user")
+VECTOR_EMBEDDING_MODE = os.getenv("VECTOR_EMBEDDING_MODE", "local").lower()
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+LOCAL_EMBEDDING_MODEL = os.getenv(
+    "LOCAL_EMBEDDING_MODEL",
+    str(Path(__file__).resolve().parent / "models" / "bge-small-zh-v1.5"),
+)
+# [新增-工具索引] 当前工具少于默认上限时全部提供；工具增多后再检索筛选。
+TOOL_SEARCH_LIMIT = max(1, int(os.getenv("TOOL_SEARCH_LIMIT", "8")))
 
 SYSTEM_PROMPT = (
     "你是一个简洁、诚实的中文 AI 助手。"
-    "需要知道当前时间时，调用 get_current_time 工具。"
-    "需要执行 Python 代码时，调用 run_python 工具。"
-    "需要创建新文件时，调用 create_file 工具。"
-    "需要覆盖或写入已有文件时，调用 write_file 工具。"
+    "需要当前时间、执行代码或操作文件时，使用本轮提供的相关工具。"
     "工具调用时不要伪造执行结果。"
     "不要在回答中伪造工具执行结果。"
 )
-
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_current_time",
-            "description": "获取运行本程序的电脑当前的本地日期和时间。",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": False,
-            },
-            "strict": True,
-        },
-    },
-    # [优化6] 新增 run_python；strict 模式下 code 必须出现在 required 里，否则请求 400
-    {
-        "type": "function",
-        "function": {
-            "name": "run_python",
-            "description": "在本地子进程中执行一段 Python 代码，返回 stdout/stderr。"
-            "仅适用于本地可信环境，不具备沙箱隔离。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "code": {"type": "string", "description": "要执行的 Python 源代码。"}
-                },
-                "required": ["code"],
-                "additionalProperties": False,
-            },
-            "strict": True,
-        },
-    },
-    # [新增] 工作空间工具：模型只能通过相对路径操作 workspace 目录
-    {
-        "type": "function",
-        "function": {
-            "name": "create_file",
-            "description": "在工作空间中创建一个不存在的 UTF-8 文本文件。只能使用相对路径。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "相对于工作空间的文件路径"},
-                    "content": {"type": "string", "description": "写入文件的完整文本"},
-                },
-                "required": ["path", "content"],
-                "additionalProperties": False,
-            },
-            "strict": True,
-        },
-    },
-    # [新增] 与 create_file 分开，明确表示这是允许覆盖已有内容的操作
-    {
-        "type": "function",
-        "function": {
-            "name": "write_file",
-            "description": "在工作空间中创建或覆盖一个 UTF-8 文本文件。只能使用相对路径。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "相对于工作空间的文件路径"},
-                    "content": {"type": "string", "description": "写入文件的完整文本"},
-                },
-                "required": ["path", "content"],
-                "additionalProperties": False,
-            },
-            "strict": True,
-        },
-    },
-]
-
 
 def _truncate(text: str) -> str:
     # [优化8] 工具输出统一截断，防止撑爆上下文
@@ -113,113 +62,7 @@ def _truncate(text: str) -> str:
     return text
 
 
-def _workspace_path(relative_path: str) -> Path:
-    """[新增] 将相对路径解析到工作空间，并拒绝越界路径。"""
-    if not isinstance(relative_path, str) or not relative_path.strip():
-        raise ValueError("文件路径不能为空")
-
-    requested = Path(relative_path)
-    if requested.is_absolute():
-        raise ValueError("只能使用工作空间内的相对路径")
-
-    candidate = (WORKSPACE_ROOT / requested).resolve()
-    try:
-        candidate.relative_to(WORKSPACE_ROOT)
-    except ValueError as exc:
-        raise ValueError("路径不能离开工作空间") from exc
-    return candidate
-
-
-def create_file(relative_path: str, content: str) -> str:
-    """[新增] 创建新文件；如果文件已经存在则拒绝覆盖。"""
-    if not isinstance(content, str):
-        return "错误：content 必须是字符串。"
-    if len(content.encode("utf-8")) > MAX_FILE_SIZE:
-        return f"错误：文件不能超过 {MAX_FILE_SIZE} 字节。"
-
-    path = _workspace_path(relative_path)
-    if path.exists():
-        return f"错误：文件已存在，未覆盖：{relative_path}"
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8", newline="")
-    return f"已创建文件：{relative_path}（{len(content.encode('utf-8'))} 字节）"
-
-
-def write_file(relative_path: str, content: str) -> str:
-    """[新增] 创建或覆盖工作空间中的 UTF-8 文本文件。"""
-    if not isinstance(content, str):
-        return "错误：content 必须是字符串。"
-    if len(content.encode("utf-8")) > MAX_FILE_SIZE:
-        return f"错误：文件不能超过 {MAX_FILE_SIZE} 字节。"
-
-    path = _workspace_path(relative_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8", newline="")
-    return f"已写入文件：{relative_path}（{len(content.encode('utf-8'))} 字节）"
-
-
-def run_python(code: str) -> str:
-    # [优化7] 清空子进程环境变量（避免把 OPENAI_API_KEY 等泄漏给模型代码）、超时、隔离模式
-    if not isinstance(code, str) or not code.strip():
-        return "错误：code 为空。"
-    try:
-        completed = subprocess.run(
-            [sys.executable, "-I", "-c", code],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            env={"PATH": os.environ.get("PATH", "")},
-        )
-    except subprocess.TimeoutExpired:
-        return "执行超时（超过 5 秒）。"
-    output = (completed.stdout or "") + (completed.stderr or "")
-    if not output:
-        return f"（无输出，返回码 {completed.returncode}）"
-    return _truncate(output)
-
-
-# [优化2] 工具注册表：定义与执行集中一处，加工具只改这里
-TOOL_HANDLERS = {
-    "get_current_time": lambda args: datetime.now().astimezone().isoformat(timespec="seconds"),
-    "run_python": lambda args: run_python(args.get("code", "")),
-    # [新增] 工具 schema 和实际 Python 函数通过这个注册表连接
-    "create_file": lambda args: create_file(args.get("path", ""), args.get("content", "")),
-    "write_file": lambda args: write_file(args.get("path", ""), args.get("content", "")),
-}
-
-
-def dispatch_tool(name: str, raw_arguments: str) -> str:
-    # [优化9] 解析 arguments（字符串形式的 JSON）+ 未知工具兜底 + 执行异常兜底
-    print(f"\n[tool:start] {name}")  # [新增] 展示模型请求执行了哪个工具
-    try:
-        args = json.loads(raw_arguments or "{}")
-    except json.JSONDecodeError as exc:
-        result = f"错误：工具参数不是合法 JSON（{exc}）。"
-        print(f"[tool:error] {result}")
-        return result
-
-    # [新增] 展示完整工具参数，便于观察模型如何选择工具和构造参数
-    print(f"[tool:args] {json.dumps(args, ensure_ascii=False)}")
-
-    handler = TOOL_HANDLERS.get(name)
-    if handler is None:
-        result = f"未知工具：{name}"
-        print(f"[tool:error] {result}")
-        return result
-
-    try:
-        result = _truncate(str(handler(args)))
-    except Exception as exc:
-        result = f"工具执行出错：{exc}"
-
-    # [新增] 工具结果也显示给开发者；结果同时会回传给模型
-    print(f"[tool:result] {result}")
-    print(f"[tool:end] {name}")
-    return result
-
-
-def call_model_stream(client: OpenAI, messages: list[dict]) -> dict:
+def call_model_stream(client: OpenAI, messages: list[dict], tools: list[dict]) -> dict:
     """[新增] 流式调用模型，同时收集文本和可能的工具调用。"""
     last_exc = None
     for attempt in range(MAX_RETRIES + 1):
@@ -231,7 +74,7 @@ def call_model_stream(client: OpenAI, messages: list[dict]) -> dict:
             stream = client.chat.completions.create(
                 model=MODEL,
                 messages=messages,
-                tools=TOOLS,
+                tools=tools,
                 temperature=TEMPERATURE,
                 stream=STREAM_OUTPUT,  # [新增] 可用环境变量关闭中转站不支持的流式模式
             )
@@ -304,10 +147,88 @@ def call_model_stream(client: OpenAI, messages: list[dict]) -> dict:
     raise last_exc
 
 
-def run_agent(client: OpenAI, messages: list[dict]) -> str:
+def summarize_session(client: OpenAI, payload: dict) -> str:
+    """[新增-记忆] 用模型压缩旧原文；原始消息仍保存在 SQLite 中。"""
+    existing = payload.get("existing_summary") or "（暂无历史摘要）"
+    transcript = _truncate(payload["transcript"])
+    response = client.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "你是会话摘要器。只总结事实、用户目标、已完成事项、未完成事项、"
+                    "关键决定和约束。不要添加原文没有的信息，不要输出推理过程。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"已有摘要：\n{existing}\n\n"
+                    f"需要归档的原始消息：\n{transcript}\n\n"
+                    "请输出一份简洁的中文增量摘要。"
+                ),
+            },
+        ],
+        temperature=0.1,
+    )
+    return (response.choices[0].message.content or "").strip()
+
+
+def finish_memory_lifecycle(
+    client: OpenAI,
+    memory: MemoryStore,
+    session_id: str,
+    user_message_id: int,
+    user_text: str,
+) -> None:
+    """[新增-记忆] 一轮结束后的完整生命周期入口。"""
+    print(f"[memory:lifecycle:start] session={session_id!r} user_message_id={user_message_id}")
+    kind = memory.capture_explicit_memory(session_id, user_message_id, user_text)
+    if kind:
+        print(f"[memory:write] 已接受一条长期记忆，类型：{kind}")
+
+    payload = memory.compaction_payload(
+        session_id,
+        trigger_rounds=SUMMARY_TRIGGER_ROUNDS,
+        keep_rounds=SUMMARY_KEEP_ROUNDS,
+    )
+    if not payload:
+        print(f"[memory:lifecycle:end] session={session_id!r} summary_triggered=False")
+        return
+
+    print("[memory:summary] 达到阈值，开始总结旧 session 原文")
+    try:
+        summary = summarize_session(client, payload)
+        if summary:
+            memory.save_summary_and_archive(
+                session_id,
+                payload["cutoff_message_id"],
+                summary,
+            )
+            print("[memory:summary] 摘要已保存，旧原文已归档")
+        else:
+            print("[memory:summary] 模型没有返回摘要，原文保持未归档")
+    except Exception as exc:
+        # [新增-记忆] 摘要失败不影响当前回答，也不归档原文，下一轮继续重试。
+        print(f"[memory:summary:error] {exc}")
+    print(f"[memory:lifecycle:end] session={session_id!r} summary_triggered=True")
+
+
+def run_agent(
+    client: OpenAI,
+    messages: list[dict],
+    user_query: str,
+    tool_index: ToolIndex | None,
+    registry: ToolRegistry,
+) -> str:
+    last_tool_result = ""
     for step in range(1, MAX_STEPS + 1):
+        # [新增-工具目录] 当前任务和上一步结果决定本步提供的工具 schema。
+        query = (user_query + "\n" + last_tool_result)[:1500]
+        available_tools = registry.select(query, tool_index, TOOL_SEARCH_LIMIT)
         print(f"\n\n[agent:step {step}/{MAX_STEPS}] 请求模型")  # [新增] 展示 Agent 调度轮次
-        streamed = call_model_stream(client, messages)
+        streamed = call_model_stream(client, messages, available_tools)
         text = streamed["text"]
         tool_calls = streamed["tool_calls"]
         finish_reason = streamed["finish_reason"]
@@ -338,11 +259,13 @@ def run_agent(client: OpenAI, messages: list[dict]) -> str:
             }
         )
         for call in tool_calls:
-            # [新增] 将流式拼接的工具调用转换为原 dispatch_tool 使用的形状
-            result = dispatch_tool(
+            # [新增-工具目录] 将模型请求交给独立注册表校验并分发。
+            result = registry.dispatch(
                 call["function"]["name"],
                 call["function"]["arguments"],
+                available_tools,
             )
+            last_tool_result = result
             messages.append(
                 {"role": "tool", "tool_call_id": call["id"], "content": result}
             )
@@ -353,16 +276,6 @@ def run_agent(client: OpenAI, messages: list[dict]) -> str:
     return final_text
 
 
-def trim_history(messages: list[dict], max_rounds: int) -> None:
-    # [优化3] 按完整轮次截断：从某个 user 消息处切开，
-    # 保证 assistant 的 tool_calls 和对应的 tool 结果不会被拆散
-    user_indices = [i for i, m in enumerate(messages) if m["role"] == "user"]
-    if len(user_indices) <= max_rounds:
-        return
-    cut = user_indices[len(user_indices) - max_rounds]
-    del messages[1:cut]  # 保留 messages[0] 的系统提示词
-
-
 def main() -> None:
     if not os.getenv("OPENAI_API_KEY"):
         print("请先设置环境变量 OPENAI_API_KEY。")
@@ -371,12 +284,44 @@ def main() -> None:
     # [新增] 启动时创建工作空间目录；工具只能在这里读写
     WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
     client = OpenAI()
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    # [新增-向量] 默认加载本地语义模型；hash/openai 仍作为备用模式。
+    if VECTOR_EMBEDDING_MODE == "openai":
+        embedder = OpenAIEmbedding(client, EMBEDDING_MODEL)
+    elif VECTOR_EMBEDDING_MODE == "local":
+        model_path = Path(LOCAL_EMBEDDING_MODEL)
+        if not model_path.is_absolute():
+            model_path = Path(__file__).resolve().parent / model_path
+        embedder = LocalEmbedding(model_path)
+    else:
+        embedder = HashEmbedding()
+    vector_store = VectorStore(WORKSPACE_ROOT, embedder)
+    skill_catalog = SkillCatalog(Path(__file__).resolve().parent / "skill")
+    # [新增-工具目录] 清单和处理函数独立于主循环，启动时核对名称。
+    runtime = ToolRuntime(WORKSPACE_ROOT, skill_catalog, MAX_FILE_SIZE, MAX_OUTPUT)
+    registry = ToolRegistry(Path(__file__).resolve().parent / "tools" / "catalog.json", runtime)
+    # [新增-工具索引] 工具向量与长期记忆向量各自存盘、使用同一 embedding。
+    embedding_id = f"{VECTOR_EMBEDDING_MODE}:{LOCAL_EMBEDDING_MODEL if VECTOR_EMBEDDING_MODE == 'local' else EMBEDDING_MODEL}"
+    try:
+        tool_index = ToolIndex(WORKSPACE_ROOT, embedder, registry.entries, embedding_id)
+    except Exception as exc:
+        tool_index = None
+        print(f"[tool:index:error] {exc}；暂时提供全部工具")
+    # [新增-记忆] 每个窗口默认生成独立 session；设置 AGENT_SESSION_ID 才会恢复旧会话。
+    memory = MemoryStore(
+        MEMORY_DB,
+        OWNER_ID,
+        os.getenv("AGENT_SESSION_ID") or None,
+        vector_store=vector_store,
+    )
+    session_id = memory.session_id
     print(
         "AI 助手已启动。输入“退出”结束。"
-        f"工作空间：{WORKSPACE_ROOT}"
-        "命令：/clear 清空历史，/help 帮助。"
+        f"工作空间：{WORKSPACE_ROOT}，session：{session_id}。"
+        f" 向量：{VECTOR_EMBEDDING_MODE}。"
+        " 命令：/clear、/session、/reindex、/reindex-tools、/skills、/help。"
     )
+    if vector_store.load_error:
+        print(f"[memory:vector:error] {vector_store.load_error}")
 
     while True:
         try:
@@ -393,27 +338,74 @@ def main() -> None:
 
         # [优化12] 斜杠命令
         if user_input == "/clear":
-            messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-            print("已清空对话历史。")
+            session_id = memory.create_session()
+            print(f"已创建新 session：{session_id}。旧 session 原文仍保留。")
+            continue
+        if user_input == "/session":
+            print(f"[memory:session] {memory.stats(session_id)}")
+            if vector_store.load_error:
+                print(f"[memory:vector:error] {vector_store.load_error}")
+            if memory.last_vector_error:
+                print(f"[memory:vector:error] {memory.last_vector_error}")
+            continue
+        if user_input == "/reindex":
+            try:
+                count = memory.rebuild_vectors()
+                print(f"[memory:vector] 已重建 {count} 条长期记忆向量")
+            except Exception as exc:
+                print(f"[memory:vector:error] {exc}")
+            continue
+        if user_input == "/reindex-tools":
+            try:
+                if tool_index is None:
+                    tool_index = ToolIndex(WORKSPACE_ROOT, embedder, registry.entries, embedding_id)
+                else:
+                    tool_index.rebuild()
+            except Exception as exc:
+                tool_index = None
+                print(f"[tool:index:error] {exc}")
+            continue
+        if user_input == "/skills":
+            print(skill_catalog.descriptions() or "没有可用的 skill")
             continue
         if user_input == "/help":
-            print("命令：/clear 清空历史，/help 帮助，退出 结束。")
+            print("命令：/clear 新建 session，/session 查看状态，/reindex 重建记忆向量，/reindex-tools 重建工具向量，/skills 查看 skill，/help 帮助，退出 结束。")
             continue
 
-        history_length = len(messages)
-        messages.append({"role": "user", "content": user_input})
+        # [新增-记忆] 每轮按当前 query 重新构建上下文：摘要、长期记忆和当前 session 的短期原文。
+        messages = memory.build_context_messages(
+            SYSTEM_PROMPT + (
+                "\n可用 skill（相关任务先调用 read_skill）：\n" + skill_catalog.descriptions()
+                if skill_catalog.entries else ""
+            ),
+            user_input,
+            max_rounds=SHORT_TERM_ROUNDS,
+        )
+        turn_start = len(messages)
+        user_message = {"role": "user", "content": user_input}
+        messages.append(user_message)
+        user_message_id = memory.save_message(session_id, user_message)
         try:
             # [新增] run_agent 自己负责流式打印，避免这里再次拼接导致答案重复
-            run_agent(client, messages)
+            run_agent(client, messages, user_input, tool_index, registry)
         except Exception as exc:
-            # [优化13] 保留 user 消息，只回滚 assistant/tool，再补一条 assistant 错误消息
-            del messages[history_length + 1:]
+            # [优化13] 保留当前用户消息，并把错误作为本轮可追踪结果保存。
             error_text = f"（调用失败：{exc}）"
             messages.append({"role": "assistant", "content": error_text})
             print(error_text)
 
-        # [优化3] 每轮结束后裁剪历史
-        trim_history(messages, MAX_HISTORY_ROUNDS)
+        # [新增-记忆] 保存本轮 assistant/tool 事件，形成不可变原始事件记录。
+        for message in messages[turn_start + 1:]:
+            memory.save_message(session_id, message)
+
+        # [新增-记忆] 执行“候选记忆 -> 去重更新 -> 摘要归档”的生命周期。
+        finish_memory_lifecycle(
+            client,
+            memory,
+            session_id,
+            user_message_id,
+            user_input,
+        )
 
 
 if __name__ == "__main__":

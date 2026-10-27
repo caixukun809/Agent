@@ -1,0 +1,6 @@
+# [新增-向量] 运行 Agent、FAISS 向量索引和本地数组计算所需依赖。
+openai
+numpy
+faiss-cpu
+python-dotenv
+sentence-transformers
