@@ -19,9 +19,11 @@ class ToolRegistry:
             if entry["id"] not in runtime.handlers:
                 raise ValueError(f"工具缺少执行函数：{entry['id']}")
 
-    def select(self, query: str, index, limit: int) -> list[dict]:
+    def select(self, query: str, index, limit: int, trace: dict | None = None) -> list[dict]:
         searchable = [entry for entry in self.entries if not entry.get("always_available")]
         pinned = [entry for entry in self.entries if entry.get("always_available")]
+        candidates = []
+        fallback = index is None
         if index is None:
             print("[tool:search] 索引不可用，提供全部工具")
             selected = searchable
@@ -34,14 +36,25 @@ class ToolRegistry:
                 print("[tool:search] " + ", ".join(
                     f"{entry['id']}={score:.3f}" for entry, score in matches
                 ))
+                candidates = [
+                    {"id": entry["id"], "score": round(score, 3)}
+                    for entry, score in matches
+                ]
                 ranked = [entry for entry, _ in matches if not entry.get("always_available")]
                 selected = ranked[:max(1, limit)]
                 if len(selected) != min(max(1, limit), len(searchable)):
                     raise ValueError("索引没有返回足够的普通工具")
             except Exception as exc:
                 print(f"[tool:search:error] {exc}；提供全部工具")
+                fallback = True
                 selected = searchable
         schemas = [entry["schema"] for entry in [*selected, *pinned]]
+        if trace is not None:
+            trace.update({
+                "candidates": candidates,
+                "available": [schema["function"]["name"] for schema in schemas],
+                "fallback": fallback,
+            })
         print("[tool:available] " + ", ".join(
             schema["function"]["name"] for schema in schemas
         ))

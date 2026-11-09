@@ -2,5 +2,9 @@
   {
     "name": "python-hello-world",
     "description": "用户需要创建一个输出 Hello World 的 Python 文件时，按此 skill 的步骤操作。"
+  },
+  {
+    "name": "zhengzhou-three-day-weather",
+    "description": "用户询问郑州今天、明天和后天的天气时，访问中国天气网指定页面并整理天气、温度和风力。"
   }
 ]

@@ -5,4 +5,14 @@
     <orderEntry type="jdk" jdkName="Python 3.13" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
+  <component name="TemplatesService">
+    <option name="TEMPLATE_FOLDERS">
+      <list>
+        <option value="$MODULE_DIR$/RAG" />
+        <option value="$MODULE_DIR$/Langgrph" />
+        <option value="$MODULE_DIR$/Langchain" />
+        <option value="$MODULE_DIR$/langgraph" />
+      </list>
+    </option>
+  </component>
 </module>

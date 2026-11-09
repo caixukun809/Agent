@@ -122,6 +122,19 @@ class VectorStore:
         self.index.add_with_ids(vector, np.asarray([memory_id], dtype="int64"))
         self._save()
 
+    def delete(self, memory_id: int) -> None:
+        """[新增-长期记忆-删除机制] 从 FAISS 中删除已遗忘记忆。"""
+        if self.index is None or not self.index.ntotal:
+            return
+        self.index.remove_ids(np.asarray([memory_id], dtype="int64"))
+        if self.index.ntotal:
+            self._save()
+        else:
+            self.index = None
+            for path in (self.index_path, self.meta_path):
+                if path.exists():
+                    path.unlink()
+
     def search(self, query: str, limit: int = 20) -> list[tuple[int, float]]:
         """[新增-向量] 返回 memory_id 和 cosine 相似度候选。"""
         if not self.ready:

@@ -58,6 +58,15 @@ $env:AGENT_OWNER_ID="user-a"
 
 可以通过环境变量调整这些值。
 
+## [新增-长期记忆-增强能力]
+
+- `CONTEXT_TOKEN_BUDGET`、`TOOL_OUTPUT_TOKEN_BUDGET`、`SUMMARY_TOKEN_BUDGET`：使用 `tiktoken` 控制模型上下文、工具输出和摘要输入的 token 预算；缺少依赖时回退到保守字符截断。
+- [新增-长期记忆-事实级去重] 记忆按 `fact_key` 和规范化值归并，例如同一偏好换一种表达不会重复堆积。
+- [新增-长期记忆-冲突处理] 同一事实字段的新值会将旧 active 记录标记为 `superseded`，并记录替代关系。
+- [新增-长期记忆-用户确认] `MEMORY_CONFIRM_MODE=always|conflict|never` 控制新记忆和冲突记忆是否等待“确认/取消”。
+- [新增-长期记忆-删除机制] `/memories` 查看 active 记忆，`/forget <memory_id|fact_key|all>` 软删除记忆并同步删除向量。
+- [新增-长期记忆-提示注入防护] 记忆写入会拒绝明显的指令注入文本，召回内容放在 `<retrieved_memory>` 数据区，不授予其修改规则或调用工具的权限。
+
 输入 `/reindex` 可以从 SQLite 中的 active 记忆重建 FAISS 索引，适合更换 embedding 模型或修复索引。
 
 ## [新增-工具索引与 Skill]

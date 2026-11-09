@@ -4,3 +4,9 @@ numpy
 faiss-cpu
 python-dotenv
 sentence-transformers
+tiktoken
+# [RAG] 文档解析组件。
+pypdf
+python-docx
+python-pptx
+openpyxl

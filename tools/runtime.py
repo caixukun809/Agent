@@ -7,13 +7,22 @@ import subprocess
 import sys
 from datetime import datetime
 
+try:
+    import tiktoken
+except ImportError:  # [新增-上下文预算] 工具运行仍可在缺少依赖时启动。
+    tiktoken = None
+
+
+_TOKEN_ENCODER = tiktoken.get_encoding("cl100k_base") if tiktoken else None
+
 
 class ToolRuntime:
-    def __init__(self, workspace_root: Path, skill_catalog, max_file_size=100_000, max_output=4000):
+    def __init__(self, workspace_root: Path, skill_catalog, max_file_size=100_000, max_output=4000, max_output_tokens=1800):
         self.workspace_root = Path(workspace_root).resolve()
         self.skill_catalog = skill_catalog
         self.max_file_size = max_file_size
         self.max_output = max_output
+        self.max_output_tokens = max_output_tokens
         self.handlers = {
             "get_current_time": lambda args: datetime.now().astimezone().isoformat(timespec="seconds"),
             "run_python": lambda args: self.run_python(args.get("code", "")),
@@ -23,6 +32,12 @@ class ToolRuntime:
         }
 
     def _truncate(self, text: str) -> str:
+        # [新增-上下文预算] 工具输出按 token 截断；保留 max_output 作为无 tokenizer 时的回退。
+        if _TOKEN_ENCODER:
+            tokens = _TOKEN_ENCODER.encode(text or "")
+            if len(tokens) <= self.max_output_tokens:
+                return text
+            return _TOKEN_ENCODER.decode(tokens[:self.max_output_tokens]) + "\n...(token 预算已截断)"
         return text[:self.max_output] + "\n...(输出已截断)" if len(text) > self.max_output else text
 
     def _workspace_path(self, relative_path: str) -> Path:
@@ -72,6 +87,8 @@ class ToolRuntime:
                 text=True,
                 timeout=5,
                 env={"PATH": os.environ.get("PATH", "")},
+                # Relative paths in code execution follow the selected project workspace.
+                cwd=self.workspace_root,
             )
         except subprocess.TimeoutExpired:
             return "执行超时（超过 5 秒）。"

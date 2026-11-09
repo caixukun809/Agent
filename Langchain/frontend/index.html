@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f7f5">
+  <title>Agent 工作台</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar" aria-label="会话与工作空间">
+      <div class="brand"><span class="brand-mark">A</span><span>Agent <strong>工作台</strong></span></div>
+      <div class="workspace-picker">
+        <label for="workspace-select">项目工作区</label>
+        <div class="workspace-picker-row"><select id="workspace-select" aria-label="选择项目工作区"></select><button id="new-workspace" type="button" title="新建工作区">+</button></div>
+      </div>
+      <button class="new-session" id="new-session" type="button"><span class="icon icon-plus"></span><span>新会话</span></button>
+
+      <div class="side-section">
+        <div class="section-heading"><span id="session-list-title">会话</span><span class="section-actions"><span id="session-count">0</span><button class="side-icon-button" id="toggle-archives" type="button" title="查看已归档会话" aria-label="查看已归档会话" aria-pressed="false"><span class="icon icon-archive"></span></button></span></div>
+        <div class="session-list" id="session-list"></div>
+      </div>
+
+      <div class="side-section workspace-section">
+        <div class="section-heading"><span>工作空间</span><span id="file-count">0</span></div>
+        <div class="file-list" id="file-list"></div>
+      </div>
+
+      <div class="sidebar-footer">
+        <span class="status-dot"></span>
+        <span id="sidebar-model">连接中</span>
+      </div>
+    </aside>
+
+    <main class="chat-pane">
+      <header class="topbar">
+        <button class="icon-button mobile-menu" id="toggle-sidebar" type="button" title="会话与文件" aria-label="会话与文件"><span class="icon icon-panel-left"></span></button>
+        <div class="session-heading">
+          <strong id="session-title">新会话</strong>
+          <span id="session-id">正在连接</span>
+        </div>
+        <div class="topbar-actions">
+          <div class="agent-switch" role="group" aria-label="Agent 实现">
+            <button type="button" class="agent-option" data-backend="sdk" title="使用原版 OpenAI SDK Agent">SDK</button>
+            <button type="button" class="agent-option" data-backend="langchain" title="使用 LangChain Agent">LangChain</button>
+            <button type="button" class="agent-option" data-backend="langgraph" title="规划、搜索、评审并撰写调研报告">调研</button>
+          </div>
+          <select id="model-select" class="model-select" aria-label="选择模型配置" title="切换模型配置"></select>
+          <span class="model-pill" id="model-pill">Agent</span>
+          <button class="icon-button" id="toggle-inspector" type="button" title="执行详情" aria-label="执行详情"><span class="icon icon-panel-right"></span></button>
+        </div>
+      </header>
+
+      <div class="chat-scroll" id="chat-scroll">
+        <div class="messages" id="messages"></div>
+      </div>
+
+      <form class="composer-wrap" id="composer-form">
+        <div class="composer">
+          <textarea id="message-input" rows="2" placeholder="输入消息…" aria-label="消息" maxlength="20000"></textarea>
+          <button class="send-button" id="send-button" type="submit" title="发送" aria-label="发送"><span class="icon icon-arrow-up"></span></button>
+        </div>
+        <div class="composer-meta"><span id="composer-state">就绪</span><span id="embedding-label"></span></div>
+      </form>
+    </main>
+
+    <aside class="inspector" id="inspector" aria-label="执行详情">
+      <div class="inspector-head">
+        <div><strong>执行详情</strong><span id="inspector-subtitle">当前会话</span></div>
+        <button class="icon-button inspector-close" id="close-inspector" type="button" title="关闭详情" aria-label="关闭详情"><span class="icon icon-x"></span></button>
+      </div>
+      <div class="inspector-tabs" role="tablist">
+        <button class="tab active" data-tab="trace" role="tab" aria-selected="true">轨迹</button>
+        <button class="tab" data-tab="memory" role="tab" aria-selected="false">记忆</button>
+        <button class="tab" data-tab="tools" role="tab" aria-selected="false">工具</button>
+      </div>
+      <div class="inspector-content" id="inspector-content"></div>
+    </aside>
+  </div>
+
+  <div class="backdrop" id="backdrop" hidden></div>
+  <dialog class="file-dialog" id="file-dialog">
+    <div class="dialog-head"><strong id="file-title">文件</strong><button class="icon-button" id="close-file" type="button" title="关闭" aria-label="关闭"><span class="icon icon-x"></span></button></div>
+    <pre id="file-content"></pre>
+  </dialog>
+  <dialog class="workspace-dialog" id="workspace-dialog">
+    <form method="dialog" id="workspace-form"><div class="dialog-head"><strong>新建工作区</strong><button class="icon-button" value="cancel" type="submit" title="关闭" aria-label="关闭"><span class="icon icon-x"></span></button></div><div class="workspace-form-body"><label for="workspace-name">工作区名称</label><input id="workspace-name" maxlength="80" required placeholder="例如：天气 Agent 项目"><div class="dialog-actions"><button type="submit" value="cancel" class="dialog-button secondary">取消</button><button type="submit" value="create" class="dialog-button primary">创建</button></div></div></form>
+  </dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
